@@ -5,86 +5,101 @@
 #include <time.h>
 #include <inttypes.h>
 
-#define STRUCT_SIZE 31
-#define CYCLE_COUNT 50
 
-#define L1_TIME 8  //32K
-#define L2_TIME 15   //256K
-#define L3_TIME 100  //3072K
+#define BIG_CYCLE_COUNT 20        //data acces cycles count
+#define SMALL_CYCLE_COUNT 1000000 //data access operations
 
 //CPU FREQ = 2,2 GHz
 
-
-
-typedef struct{
+struct elem{
   struct elem *next;
-  long int payload[STRUCT_SIZE];
-} elem;
+  uint64_t payload;
+};
 
-
-int main(void)
-{
-    //BASIC ALLOCATION
-    elem** array=malloc(sizeof(elem)*CYCLE_COUNT);
-    //ALLOCATE ELEMENTS AND BIND'EM
-    array[0]=(struct elem*)malloc(sizeof(elem));
-    for (uint64_t i=1;i<CYCLE_COUNT-1;++i){
-        array[i]=(struct elem*)malloc(sizeof(elem));
-        array[i-1]->next=array[i];
+void build_list_conseq(void* head, uint32_t size, uint16_t elem_size) {
+    struct elem* current = head;
+    for (uint64_t i = 1; i < size; ++i) {
+        current->next = head + i * elem_size;
+        current = current->next;
     }
-    //array[CYCLE_COUNT-1]->next=array[0];
+    current->next = head;
+}
 
-    //RANDOM ALLOCATION
-    elem** random_array=malloc(sizeof(elem)*CYCLE_COUNT);
-    array[0]=(struct elem*)malloc(sizeof(elem));
-    elem* temp=array[0];
-    for (uint64_t i=1;i<CYCLE_COUNT;++i){
-        uint64_t rand_pos = rand()%CYCLE_COUNT;
-        while (random_array[rand_pos]!=NULL ){
-            ++rand_pos;
-            if (rand_pos > CYCLE_COUNT) { rand_pos = 0; }
+void buid_list_random(void* head, uint64_t size, uint64_t elem_size){
+    struct elem* current = head;
+    srand((unsigned int) time(NULL));
+    for (uint64_t i = 1; i < size; ++i) {
+        uint64_t next = rand() % size;
+        void* temp = head + next * elem_size;
+        while (temp == current || ((struct elem*) temp)->next) {
+            next = ++next%size;
+            temp = head + next * elem_size;
         }
-        random_array[rand_pos]=(struct elem*)malloc(sizeof(elem));
-        temp->next=array[rand_pos];
-        temp=random_array[rand_pos];
+        current->next = temp;
+        current = current->next;
     }
-    temp->next=array[0];
+    current->next = head;
+}
 
+uint64_t measure(struct elem* head, uint32_t size) {
+    struct elem* current = head;
+    uint64_t avg = 0;
 
-    uint64_t x=0;
+    for (int i = 0; i < BIG_CYCLE_COUNT; ++i) {
 
-    uint64_t avg=0;
+        uint64_t start = __rdtsc();
 
-    uint64_t start;
-    uint64_t stop;
-    //CONSEQ ACCESS
-    elem* current=array[0];
-    while(current->next != NULL){
-        start = _rdtsc();
+        for (int j = 0; j < SMALL_CYCLE_COUNT; ++j) {
+            current->payload += 1;
+            current = current->next;
+        }
 
-        current->payload[0]++;
-        current=current->next;
-
-        stop = _rdtsc();
-        avg+=(stop-start);
-    }    
-    printf("conseq access avg time %" PRIu64 "\n",avg/(CYCLE_COUNT));
-
-    avg=0;
-    //RANDOM_ACCESS
-    current=random_array[0];
-    while(current->next != NULL){
-        start = _rdtsc();
-
-        current->payload[0]++;
-        current=current->next;
-
-        stop = _rdtsc();
-        avg+=(stop-start);
+        uint64_t stop = __rdtsc();
+        avg += (stop - start) / SMALL_CYCLE_COUNT;
     }
-    avg = avg/CYCLE_COUNT;
-    printf("rand access avg time %" PRIu64 "\n",avg);
 
+    avg /= BIG_CYCLE_COUNT;
 
+    return avg;
+}
+
+int main(int argc, char** argv){
+    uint64_t list_size = 1;
+    uint64_t node_size = 1;
+    uint8_t is_random = 0;
+    int c = 1;
+    while ((c = getopt(argc, argv, "rn:l:")) != -1)
+        switch (c) {
+            case 'l': {
+                (list_size) = (uint64_t) atoi(optarg);
+                break;}
+            case 'n':{
+                (node_size) = (uint64_t) atoi(optarg);
+                break;}
+            case 'r':{
+                (is_random) = 1;
+                break;}
+            default:
+                exit(1);
+        }
+
+    node_size *= sizeof(struct elem);
+
+        void* list = calloc(list_size, node_size);
+        if (list) {
+            if (is_random == 1)
+                buid_list_random(list, list_size, node_size);
+            else
+                build_list_conseq(list, list_size, node_size);
+
+           //    if (is_random) printf("random access:\n");
+            //else printf("conseq access:\n");
+
+            //printf("node size = %d list size = %d total = %lu Kb\n", node_size, list_size, ((uint64_t) node_size * list_size) >> 10);
+            printf("%lu\n", ((uint64_t) node_size * list_size) >> 10);
+            printf("%" PRIu64 " ", measure(list, list_size));
+            free(list);
+        }
+        return 0;
 }
 
